@@ -152,6 +152,10 @@
   .kop { display: flex; justify-content: space-between; align-items: center; gap: 10px; }
   .kop-knop { border: 1px solid var(--line); background: var(--card); color: var(--muted); border-radius: 999px; padding: 6px 12px;
     font: inherit; font-size: 13px; font-weight: 600; cursor: pointer; min-height: 34px; }
+  .pt-knop { flex: none; border: 1.5px dashed var(--accent); background: none; color: var(--accent); border-radius: 999px; padding: 6px 12px;
+    font: inherit; font-size: 14px; font-weight: 700; cursor: pointer; min-height: 36px; white-space: nowrap; }
+  .pt-knop.heeft { border-style: solid; background: var(--accent-soft); }
+  .recent li.nas-dag { align-items: center; }
   .switch input { width: 22px; height: 22px; accent-color: var(--accent); }
   a { color: var(--accent); }
 </style>
@@ -945,6 +949,26 @@ function laadNascholing() {
   });
 }
 
+function puntenModal(naam, datum, huidig, opslaan) {
+  modal('<h3>' + (huidig === null ? 'Punten toevoegen' : 'Punten wijzigen') + '</h3>' +
+    '<p class="muted small" style="margin-top:-6px">' + esc(naam) + ' · ' + esc(datum) + '</p>' +
+    '<label class="lbl" for="mpt">Accreditatiepunten</label>' +
+    '<input type="text" inputmode="decimal" id="mpt" placeholder="Bijv. 2" value="' + (huidig === null ? '' : esc(nf(huidig))) + '">' +
+    '<div id="mptfout"></div><div class="stack" style="margin-top:14px"><button class="btn" id="mptok">Opslaan</button>' +
+    '<button class="btn ghost" id="mptweg">Annuleren</button></div>');
+  var veld = $('#mpt'); veld.focus(); veld.select();
+  $('#mptweg').onclick = function () { modal(''); };
+  var klaar = function () {
+    var pt = parseNum(veld.value);
+    if (pt === null || isNaN(pt) || pt <= 0 || pt > 200) { $('#mptfout').innerHTML = '<div class="err">Vul het aantal punten in (bijv. 2 of 1,5).</div>'; return; }
+    var knop = $('#mptok'); knop.disabled = true; knop.textContent = 'Bezig…';
+    opslaan(pt).then(function () { modal(''); toast('Punten opgeslagen.'); laadNascholing(); })
+      .catch(function (e) { $('#mptfout').innerHTML = '<div class="err">' + esc(foutTekst(e)) + '</div>'; knop.disabled = false; knop.textContent = 'Opslaan'; });
+  };
+  $('#mptok').onclick = klaar;
+  veld.onkeydown = function (e) { if (e.key === 'Enter') klaar(); };
+}
+
 function renderNascholing(d) {
   var jaarNu = Number(S.init.vandaag.slice(0, 4));
   var h = '<div class="chips" style="margin-top:8px">';
@@ -960,7 +984,7 @@ function renderNascholing(d) {
   if (!d.items.length) h += '<div class="card muted">Nog geen nascholingen met punten in ' + d.jaar + '. Vul punten in bij een nascholingsdag, of voeg ze hieronder toe.</div>';
   d.items.forEach(function (x, i) {
     h += '<div class="card"><div class="grp-head"><div><h3>' + esc(x.naam) + '</h3><div class="muted small">' + esc(datumKort(x.datum)) + ' · ' + esc(x.soort) + '</div></div>' +
-      '<div class="bedrag">' + esc(nf(x.punten)) + ' pt</div></div>' +
+      '<button class="pt-knop heeft" data-pitem="' + i + '" aria-label="Punten wijzigen">' + esc(nf(x.punten)) + ' pt ✎</button></div>' +
       '<label class="switch"><input type="checkbox" data-punt="' + i + '"' + (x.ontvangen ? ' checked' : '') + '> Punten ontvangen</label></div>';
   });
   h += '<div class="card"><h3>Punten toevoegen</h3><p class="small muted" style="margin:0">Voor een nascholing die je nog niet hebt ingevuld.</p>' +
@@ -971,7 +995,12 @@ function renderNascholing(d) {
 
   if (d.dagen.length) {
     h += '<h2>Nascholingsdagen in je urenregistratie</h2><div class="card recent"><ul>';
-    d.dagen.forEach(function (x) { h += '<li><span><b>' + esc(datumKort(x.datum)) + '</b> · ' + esc(x.naam) + '</span><span class="muted">' + esc(uurTekst(x.uren)) + '</span></li>'; });
+    h += '<p class="small muted" style="margin:-4px 0 10px">Tik op "+ punten" om accreditatiepunten bij een dag te zetten.</p>';
+    d.dagen.forEach(function (x, i) {
+      h += '<li class="nas-dag"><span><b>' + esc(datumKort(x.datum)) + '</b> · ' + esc(x.naam) + '<br><span class="muted small">' + esc(uurTekst(x.uren)) + '</span></span>' +
+        (x.puntRij ? '<button class="pt-knop heeft" data-pdag="' + i + '">' + esc(nf(x.punten)) + ' pt ✎</button>'
+          : '<button class="pt-knop" data-pdag="' + i + '">+ punten</button>') + '</li>';
+    });
     h += '</ul></div>';
   }
   $('#view').innerHTML = h;
@@ -982,6 +1011,21 @@ function renderNascholing(d) {
       cb.disabled = true;
       call('zetPuntenOntvangen', x.rij, x.naam, cb.checked).then(function () { laadNascholing(); })
         .catch(function (e) { cb.checked = !cb.checked; cb.disabled = false; toast(foutTekst(e)); });
+    };
+  });
+  document.querySelectorAll('[data-pitem]').forEach(function (k) {
+    k.onclick = function () {
+      var x = d.items[Number(k.getAttribute('data-pitem'))];
+      puntenModal(x.naam, datumKort(x.datum), x.punten, function (pt) { return call('wijzigPunten', x.rij, x.naam, pt); });
+    };
+  });
+  document.querySelectorAll('[data-pdag]').forEach(function (k) {
+    k.onclick = function () {
+      var x = d.dagen[Number(k.getAttribute('data-pdag'))];
+      puntenModal(x.naam, datumKort(x.datum), x.puntRij ? x.punten : null, function (pt) {
+        return x.puntRij ? call('wijzigPunten', x.puntRij, x.naam, pt)
+          : call('voegNascholingToe', { datum: x.datum, naam: x.naam, punten: pt, uren: x.uren, soort: x.soort });
+      });
     };
   });
   $('#ntoevoegen').onclick = function () {
