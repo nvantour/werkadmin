@@ -149,6 +149,11 @@
   .pin-invoer::placeholder { letter-spacing: normal; font-size: 17px; font-weight: 400; }
   body.op-slot nav { display: none; }
   body.op-slot .kop-knop { display: none; }
+  .sync { position: fixed; top: 10px; left: 50%; transform: translateX(-50%); z-index: 15; margin: 0; font-size: 12px; font-weight: 600; color: var(--muted);
+    background: var(--card); border: 1px solid var(--line); border-radius: 999px; padding: 4px 10px; display: flex; align-items: center; gap: 6px; }
+  .sync[hidden] { display: none; }
+  .sync .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--accent); animation: puls 1s ease-in-out infinite; }
+  @keyframes puls { 50% { opacity: .25; } }
   .kop { display: flex; justify-content: space-between; align-items: center; gap: 10px; }
   .kop-knop { border: 1px solid var(--line); background: var(--card); color: var(--muted); border-radius: 999px; padding: 6px 12px;
     font: inherit; font-size: 13px; font-weight: 600; cursor: pointer; min-height: 34px; }
@@ -166,6 +171,7 @@
   <header>
     <div class="kop"><h1 id="titel">Werkadmin</h1><button id="pinwijzig" class="kop-knop" type="button">🔒 Pincode</button></div>
     <p id="subtitel">Even laden…</p>
+    <p id="sync" class="sync" hidden><span class="dot"></span>Bijwerken…</p>
   </header>
   <main id="view"><div class="laden"><div class="spinner"></div>Gegevens ophalen…</div></main>
 </div>
@@ -227,12 +233,57 @@ function rpc(fn, args) {
     .then(function (r) { if (!r.ok) throw new Error('NetworkError ' + r.status); return r.json(); })
     .then(function (d) { if (!d.ok) throw new Error(d.fout); return d.res; });
 }
+/* Onthouden van gelezen gegevens op dit apparaat, zodat schermen meteen verschijnen.
+   Opslaan gaat altijd rechtstreeks naar de sheet; na elke wijziging wordt het geheugen gewist. */
+var LEES = { getInit: 1, getFacturen: 1, getOverzicht: 1, getNascholingen: 1 };
+var CACHE_PREFIX = 'werkadmin-c:';
+function cacheKey(fn, args) { return CACHE_PREFIX + fn + ':' + JSON.stringify(args); }
+function cacheLees(k) { try { var v = localStorage.getItem(k); return v ? JSON.parse(v) : null; } catch (e) { return null; } }
+function cacheZet(k, d) { try { localStorage.setItem(k, JSON.stringify({ t: Date.now(), d: d })); } catch (e) {} }
+function cacheWis() {
+  try { Object.keys(localStorage).forEach(function (k) { if (k.indexOf(CACHE_PREFIX) === 0) localStorage.removeItem(k); }); } catch (e) {}
+}
 function call(fn) {
   var args = Array.prototype.slice.call(arguments, 1);
-  return rpc('api', [sleutel(), fn, args]).catch(function (e) {
-    if (/PINCODE_NODIG/.test(e && e.message || String(e))) { bewaarSleutel(''); toonPinScherm(); throw new Error('Typ eerst je pincode.'); }
+  var lees = LEES[fn] === 1;
+  return rpc('api', [sleutel(), fn, args]).then(function (d) {
+    if (lees) cacheZet(cacheKey(fn, args), d); else if (fn !== 'getDag') cacheWis();
+    return d;
+  }, function (e) {
+    if (!lees && fn !== 'getDag') cacheWis();
+    if (/PINCODE_NODIG/.test(e && e.message || String(e))) { cacheWis(); bewaarSleutel(''); toonPinScherm(); throw new Error('Typ eerst je pincode.'); }
     throw e;
   });
+}
+
+/* Toon meteen wat er onthouden is, haal op de achtergrond de nieuwste stand op. */
+function snelLaad(tab, fn, args, render, tekst, opnieuw) {
+  var mijn = S.laadId = (S.laadId || 0) + 1;
+  var c = cacheLees(cacheKey(fn, args));
+  var getoond = c ? JSON.stringify(c.d) : null;
+  sync(!!c);
+  if (c) render(c.d); else $('#view').innerHTML = '<div class="laden"><div class="spinner"></div>' + esc(tekst) + '</div>';
+  call.apply(null, [fn].concat(args)).then(function (d) {
+    if (S.laadId !== mijn || S.tab !== tab) return;
+    sync(false);
+    if (getoond === JSON.stringify(d)) return;
+    var bezig = $('#modal').innerHTML || (document.activeElement && document.activeElement.closest && document.activeElement.closest('#view input, #view textarea'));
+    if (getoond && bezig) return; // niet onder iemands handen verversen; de volgende keer staat het goed
+    var y = window.scrollY; render(d); if (getoond) window.scrollTo(0, y);
+  }).catch(function (e) {
+    if (S.laadId !== mijn) return;
+    sync(false);
+    if (getoond) toast('Kon niet verversen: ' + foutTekst(e));
+    else $('#view').innerHTML = '<div class="err">' + esc(foutTekst(e)) + '</div><button class="btn" onclick="' + opnieuw + '()">Opnieuw</button>';
+  });
+}
+function sync(aan) { var el = $('#sync'); if (el) el.hidden = !aan; }
+
+function vooruitLaden() {
+  var j = Number(S.init.vandaag.slice(0, 4)), m = Number(S.init.vandaag.slice(5, 7));
+  setTimeout(function () {
+    [['getFacturen'], ['getOverzicht', j, m], ['getNascholingen', j]].forEach(function (x) { call.apply(null, x).catch(function () {}); });
+  }, 300);
 }
 function foutTekst(e) {
   var m = (e && e.message) ? e.message : String(e);
@@ -280,15 +331,29 @@ function dienstVoorstel(k) {
 /* ===================== Start ===================== */
 function start() {
   if (!sleutel()) { toonPinScherm(); return; }
-  $('#view').innerHTML = '<div class="laden"><div class="spinner"></div>Gegevens ophalen…</div>';
-  call('getInit').then(function (d) {
+  var begin = function (d) {
     S.init = d;
     document.body.classList.remove('op-slot');
     $('#subtitel').textContent = 'Alles wat je invult komt in je sheet.';
-    if (d.test) $('#testband').innerHTML = '<div class="testband">TESTVERSIE — schrijft in de kopie "' + esc(d.sheetNaam) + '"</div>';
+    $('#testband').innerHTML = d.test ? '<div class="testband">TESTVERSIE — schrijft in de kopie "' + esc(d.sheetNaam) + '"</div>' : '';
     nieuwFormulier();
     toonTab('invullen');
+  };
+  var c = cacheLees(cacheKey('getInit', []));
+  if (c) { begin(c.d); sync(true); }
+  else $('#view').innerHTML = '<div class="laden"><div class="spinner"></div>Gegevens ophalen…</div>';
+  call('getInit').then(function (d) {
+    sync(false);
+    if (!c) { begin(d); vooruitLaden(); return; }
+    var oud = S.init;
+    S.init = d;
+    $('#testband').innerHTML = d.test ? '<div class="testband">TESTVERSIE — schrijft in de kopie "' + esc(d.sheetNaam) + '"</div>' : '';
+    // Nog niets gekozen op Invullen? Dan het scherm verversen met de nieuwste stand.
+    if (S.tab === 'invullen' && !S.f.datum && !$('#modal').innerHTML && JSON.stringify(oud) !== JSON.stringify(d)) renderInvullen();
+    vooruitLaden();
   }).catch(function (e) {
+    sync(false);
+    if (c) { toast('Kon niet verversen: ' + foutTekst(e)); return; }
     if (!sleutel()) return;
     $('#subtitel').textContent = '';
     $('#view').innerHTML = '<div class="err"><b>De app kan de sheet niet openen.</b><br>' + esc(foutTekst(e)) +
@@ -366,6 +431,8 @@ document.querySelectorAll('nav button').forEach(function (b) {
 
 function toonTab(t) {
   S.tab = t;
+  S.laadId = (S.laadId || 0) + 1;
+  sync(false);
   document.querySelectorAll('nav button').forEach(function (b) { b.classList.toggle('on', b.getAttribute('data-tab') === t); });
   modal('');
   window.scrollTo(0, 0);
@@ -766,10 +833,7 @@ function renderKlaar() {
 
 /* ===================== Facturen ===================== */
 function laadFacturen() {
-  $('#view').innerHTML = '<div class="laden"><div class="spinner"></div>Facturen ophalen…</div>';
-  call('getFacturen').then(renderFacturen).catch(function (e) {
-    $('#view').innerHTML = '<div class="err">' + esc(foutTekst(e)) + '</div><button class="btn" onclick="laadFacturen()">Opnieuw</button>';
-  });
+  snelLaad('facturen', 'getFacturen', [], renderFacturen, 'Facturen ophalen…', 'laadFacturen');
 }
 
 function renderFacturen(d) {
@@ -834,10 +898,7 @@ function bevestigStatus(g, nieuw) {
 function laadOverzicht() {
   var o = S.overzicht, v = S.init.vandaag;
   if (!o.jaar) { o.jaar = Number(v.slice(0, 4)); o.maand = Number(v.slice(5, 7)); }
-  $('#view').innerHTML = '<div class="laden"><div class="spinner"></div>Overzicht maken…</div>';
-  call('getOverzicht', o.jaar, o.maand).then(renderOverzicht).catch(function (e) {
-    $('#view').innerHTML = '<div class="err">' + esc(foutTekst(e)) + '</div><button class="btn" onclick="laadOverzicht()">Opnieuw</button>';
-  });
+  snelLaad('overzicht', 'getOverzicht', [o.jaar, o.maand], renderOverzicht, 'Overzicht maken…', 'laadOverzicht');
 }
 
 function renderOverzicht(d) {
@@ -943,10 +1004,7 @@ function koppelTips(d, eur) {
 /* ===================== Nascholing ===================== */
 function laadNascholing() {
   if (!S.nascholingJaar) S.nascholingJaar = Number(S.init.vandaag.slice(0, 4));
-  $('#view').innerHTML = '<div class="laden"><div class="spinner"></div>Nascholingen ophalen…</div>';
-  call('getNascholingen', S.nascholingJaar).then(renderNascholing).catch(function (e) {
-    $('#view').innerHTML = '<div class="err">' + esc(foutTekst(e)) + '</div><button class="btn" onclick="laadNascholing()">Opnieuw</button>';
-  });
+  snelLaad('nascholing', 'getNascholingen', [S.nascholingJaar], renderNascholing, 'Nascholingen ophalen…', 'laadNascholing');
 }
 
 function puntenModal(naam, datum, huidig, opslaan) {
