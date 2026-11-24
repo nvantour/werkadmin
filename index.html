@@ -108,7 +108,7 @@
   .stapel > i { display: block; height: 100%; flex: none; }
   .stapel > i + i { box-shadow: inset 1.5px 0 0 var(--card); }
   .c-praktijk { background: #2a9d8f; } .c-hap { background: #e76f51; } .c-reistijd { background: #9aa5a3; }
-  .c-admin { background: #5b7bd5; } .c-nascholing { background: #e9b335; } .c-intervisie { background: #a660b4; } .c-overig { background: #8d6e5a; }
+  .c-admin { background: #5b7bd5; } .c-verlof { background: #d98cb3; } .c-nascholing { background: #e9b335; } .c-intervisie { background: #a660b4; } .c-overig { background: #8d6e5a; }
   .c-km { background: #9aa5a3; }
   .seg { display: inline-flex; background: var(--line); border-radius: 999px; padding: 3px; gap: 2px; }
   .seg button { border: 0; background: none; color: var(--muted); font: inherit; font-size: 14px; font-weight: 600; padding: 6px 14px;
@@ -179,7 +179,7 @@
 <script>
 /* ===================== Basis ===================== */
 var S = { init: null, tab: 'invullen', f: null, bezig: false, overzicht: { jaar: null, maand: null, eenheid: (function () { try { return localStorage.getItem('werkadmin-eenheid') === 'eur' ? 'eur' : 'uur'; } catch (e) { return 'uur'; } })() }, nascholingJaar: null };
-var CATS = [['praktijk','Praktijk'],['hap','HAP-dienst'],['reistijd','Reistijd'],['admin','Administratie'],['nascholing','Nascholing'],['intervisie','Intervisie / FTO'],['overig','Overig']];
+var CATS = [['praktijk','Praktijk'],['hap','HAP-dienst'],['reistijd','Reistijd'],['admin','Administratie'],['verlof','Verlof'],['nascholing','Nascholing'],['intervisie','Intervisie / FTO'],['overig','Overig']];
 var EURCATS = [['praktijk','Praktijk'],['km','KM-vergoeding'],['hap','HAP-dienst'],['overig','Overig']];
 var MAANDEN = ['januari','februari','maart','april','mei','juni','juli','augustus','september','oktober','november','december'];
 var DAGEN = ['zondag','maandag','dinsdag','woensdag','donderdag','vrijdag','zaterdag'];
@@ -848,7 +848,7 @@ function renderOverzicht(d) {
     '<div class="small muted">' + (d.totaalUren >= d.doel ? 'Urencriterium van ' + nf(d.doel) + ' uur gehaald ✓' : 'Nog ' + esc(nf(d.doel - d.totaalUren, 1)) + ' uur tot het urencriterium (' + nf(d.doel) + ' uur)') + '</div>' +
     '<table class="kv" style="margin-top:12px">';
   var c = d.categorieen;
-  [['Praktijk', c.praktijk], ['HAP-diensten', c.hap], ['Reistijd', c.reistijd], ['Administratie', c.admin], ['Nascholing', c.nascholing], ['Intervisie / FTO', c.intervisie], ['Overig', c.overig]]
+  [['Praktijk', c.praktijk], ['HAP-diensten', c.hap], ['Reistijd', c.reistijd], ['Administratie', c.admin], ['Verlof (telt mee)', c.verlof], ['Nascholing', c.nascholing], ['Intervisie / FTO', c.intervisie], ['Overig', c.overig]]
     .forEach(function (x) { if (x[1]) h += '<tr><td>' + x[0] + '</td><td>' + esc(uurTekst(Math.round(x[1] * 100) / 100)) + '</td></tr>'; });
   h += '<tr class="tot"><td>Omzet</td><td>' + esc(geld(d.omzet)) + '</td></tr></table></div>';
 
